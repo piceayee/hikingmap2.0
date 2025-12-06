@@ -1,0 +1,328 @@
+/* style.css - Q2 介面美化 (修正版) */
+/* 確保頁面佔滿整個視窗 */
+html, body {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    /* 新增：統一 box-sizing 讓邊框和內邊距不影響寬度計算 */
+    box-sizing: border-box; 
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+*, *::before, *::after {
+    box-sizing: inherit;
+}
+
+body {
+    background-color: #f4f7f6; 
+    color: #333;
+    display: flex; /* 啟用 Flexbox 佈局：並排 */
+    overflow: hidden; /* 防止主體出現滾動條 */
+}
+
+/* --- 側邊欄 (Sidebar) 樣式 --- */
+#sidebar {
+    width: 380px; /* 側邊欄固定寬度 */
+    flex-shrink: 0; /* 防止側邊欄縮小 */
+    display: flex;
+    flex-direction: column; /* 內部元素垂直堆疊 */
+    background-color: #ffffff;
+    padding: 15px;
+    height: 100%; /* 確保側邊欄填滿垂直空間 */
+    overflow-y: hidden; 
+    box-shadow: 2px 0 10px rgba(0,0,0,0.05);
+}
+
+#controls {
+    flex-shrink: 0;
+    padding-bottom: 15px;
+    border-bottom: 1px solid #eee;
+    margin-bottom: 15px;
+}
+
+#sidebar h2, #sidebar h3 {
+    color: #2c3e50;
+    font-size: 1.4em;
+    margin-top: 0;
+    margin-bottom: 10px;
+    border-bottom: 2px solid #3498db;
+    padding-bottom: 5px;
+}
+
+.btn-group {
+    display: flex;
+    flex-wrap: wrap; 
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.action-btn {
+    padding: 8px 12px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 600;
+    transition: background-color 0.2s, transform 0.1s;
+    flex: 1 1 calc(50% - 4px); /* 兩欄佈局 */
+    white-space: nowrap;
+    text-align: center;
+    font-size: 0.9em;
+}
+
+.primary-btn {
+    background-color: #4CAF50; 
+    color: white;
+}
+.primary-btn:hover {
+    background-color: #45a049;
+    transform: translateY(-1px);
+}
+
+.secondary-btn {
+    background-color: #007bff; 
+    color: white;
+}
+.secondary-btn:hover {
+    background-color: #0069d9;
+    transform: translateY(-1px);
+}
+.action-btn:disabled {
+    background-color: #ccc;
+    cursor: not-allowed;
+    transform: none;
+    opacity: 0.7;
+}
+
+input[type="file"] {
+    display: none;
+}
+
+/* --- 列表容器與滾動 --- */
+#photoListContainer {
+    flex-grow: 1; /* 讓列表容器佔據剩餘垂直空間 */
+    display: flex;
+    flex-direction: column;
+    min-height: 0; 
+}
+
+#photoList {
+    flex-grow: 1;
+    overflow-y: auto; /* 只有列表內容滾動 */
+    padding-right: 5px; 
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+/* 列表滾動條樣式 (保持不變) */
+#photoList::-webkit-scrollbar {
+    width: 8px;
+}
+#photoList::-webkit-scrollbar-thumb {
+    background-color: #bdc3c7;
+    border-radius: 4px;
+}
+#photoList::-webkit-scrollbar-track {
+    background-color: #f4f4f4;
+}
+
+/* --- 照片列表項目 --- */
+.photo-item {
+    display: flex;
+    align-items: flex-start;
+    border: 1px solid #ddd;
+    border-left: 5px solid #3498db; 
+    border-radius: 6px;
+    padding: 8px;
+    background-color: #ffffff;
+    transition: box-shadow 0.2s;
+}
+
+.photo-item:hover {
+    box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+}
+
+.thumbnail {
+    width: 55px; 
+    height: 55px;
+    object-fit: cover;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.photo-info {
+    flex-grow: 1;
+    padding-left: 8px;
+    display: flex;
+    flex-direction: column;
+}
+
+.photo-name {
+    font-weight: bold;
+    color: #2c3e50; 
+    margin-bottom: 2px;
+    font-size: 0.9em;
+}
+
+.category-tags {
+    margin-bottom: 4px;
+}
+
+.photo-tag {
+    display: inline-block;
+    padding: 2px 6px;
+    margin-right: 3px;
+    border-radius: 10px;
+    font-size: 0.65em;
+    color: white;
+    font-weight: 500;
+}
+
+/* Tag Colors (保持不變) */
+.tag-red { background-color: #e74c3c; }
+.tag-orange { background-color: #f39c12; }
+.tag-yellow { background-color: #f1c40f; }
+.tag-green { background-color: #2ecc71; }
+.tag-blue { background-color: #3498db; }
+.tag-purple { background-color: #9b59b6; }
+.no-category { background-color: #95a5a6; }
+
+.go-to-marker {
+    align-self: flex-start;
+    padding: 4px 10px;
+    background-color: #3498db; 
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.75em;
+    margin-top: 4px;
+    transition: background-color 0.2s;
+}
+
+.go-to-marker:hover {
+    background-color: #2980b9;
+}
+
+/* --- 地圖 (Map) 樣式 --- */
+#map {
+    flex-grow: 1; /* 地圖佔據所有剩餘空間 */
+    height: 100%; 
+    min-width: 60%; 
+    box-shadow: -2px 0 10px rgba(0,0,0,0.05);
+}
+
+/* --- Leaflet Popup & Marker Icon 樣式 --- */
+.leaflet-popup-content-wrapper, .leaflet-popup-tip {
+    border-radius: 8px;
+}
+
+.leaflet-popup-content {
+    padding: 10px;
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+.popup-content strong {
+    font-size: 1.1em;
+    color: #2c3e50;
+}
+
+.popup-image {
+    max-width: 100%;
+    height: auto;
+    border-radius: 4px;
+    margin: 5px 0;
+    display: block;
+}
+
+.gps-link {
+    color: #3498db;
+    text-decoration: none;
+    font-size: 0.9em;
+    display: block;
+}
+
+.gps-link:hover {
+    text-decoration: underline;
+}
+
+.trail-marker-container {
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    height: 100%;
+    width: 100%;
+}
+
+.trail-marker-icon {
+    background-color: #9b59b6; 
+    color: white;
+    border-radius: 50%;
+    width: 25px;
+    height: 25px;
+    line-height: 25px;
+    text-align: center;
+    font-size: 0.8em;
+    font-weight: bold;
+    border: 3px solid white;
+    box-shadow: 0 0 5px rgba(0,0,0,0.5);
+    transform: translateY(-25px); 
+}
+
+/* --- Image Modal (Overlay) 樣式 (保持不變) --- */
+#imageModal {
+    position: fixed;
+    z-index: 10000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    background-color: rgba(0,0,0,0.9);
+    display: none; 
+    justify-content: center;
+    align-items: center;
+}
+
+#fullImage {
+    max-width: 90%;
+    max-height: 90%;
+    display: block;
+    margin: auto;
+    border-radius: 8px;
+    box-shadow: 0 0 20px rgba(0,0,0,0.5);
+}
+
+.close {
+    position: absolute;
+    top: 20px;
+    right: 35px;
+    color: #f1f1f1;
+    font-size: 40px;
+    font-weight: bold;
+    transition: 0.3s;
+    cursor: pointer;
+}
+
+.close:hover,
+.close:focus {
+    color: #bbb;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+/* style.css - (部分內容) */
+/* ... (保留所有舊樣式，在 .action-btn 之後新增以下內容) ... */
+
+/* 新增：清除按鈕樣式 (Q4 建議) */
+.alert-btn {
+    background-color: #e74c3c; /* 紅色 */
+    color: white;
+    flex: 1 1 100%; /* 佔滿整行 */
+}
+.alert-btn:hover {
+    background-color: #c0392b;
+    transform: translateY(-1px);
+}
+
+/* ... (保留所有其他樣式) ... */
