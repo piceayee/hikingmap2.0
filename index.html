@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>地圖紀錄與照片管理</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <script src="https://cdn.jsdelivr.net/npm/exif-js"></script>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/heic2any/0.0.4/heic2any.min.js"></script> 
+    
+    <link rel="stylesheet" href="style.css"> 
+</head>
+<body>
+    <div id="sidebar">
+        <div id="controls">
+            <h2>地圖紀錄控制面板</h2>
+            <div class="btn-group">
+                <input type="file" id="photoUpload" accept="image/*,.heic,.heif" multiple>
+                <button id="selectPhotosBtn" class="action-btn primary-btn">選擇照片並上傳</button>
+                
+                <input type="file" id="gpxUpload" accept=".gpx">
+                <button id="selectGpxBtn" class="action-btn primary-btn">匯入 GPX 軌跡</button>
+                
+                <input type="file" id="jsonUpload" accept=".json">
+                <button id="selectJsonBtn" class="action-btn secondary-btn">匯入行程 (JSON)</button>
+                
+                <button id="exportTrailDataBtn" class="action-btn secondary-btn" disabled>匯出照片紀錄 (CSV)</button>
+                <button id="exportTrailJsonBtn" class="action-btn secondary-btn" disabled>匯出行程 (JSON)</button>
+                <button id="exportGpxHourlyBtn" class="action-btn secondary-btn" disabled>匯出 GPX 整點紀錄 (CSV)</button>
+                
+                <button id="clearDataBtn" class="action-btn alert-btn">清除所有紀錄</button>
+            </div>
+        </div>
+        
+        <div id="photoListContainer">
+            <h3>照片/景點列表</h3>
+            <div id="photoList">
+                </div>
+        </div>
+    </div>
+
+    <div id="map"></div>
+
+    <div id="imageModal" class="modal">
+        <span class="close">×</span>
+        <img class="modal-content" id="fullImage">
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
