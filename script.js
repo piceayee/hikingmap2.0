@@ -1,23 +1,24 @@
 // 📌 全域範圍變數
 let map;
 let markers = []; // 儲存所有地圖上的標記 (JSON 景點)
-let leafletTrailMarkers = {}; // 儲存 Leaflet 登山照片標記實例，用於列表點擊和自動定位
+let leafletTrailMarkers = {}; // 儲存 Leaflet 登山照片標記實例
 let trailMarkersData = []; // 儲存所有上傳照片的數據，用於匯出/匯入
 let gpxLayer = null; // 用來存儲 GPX 軌跡圖層
-let gpxHourlyMarkersData = []; // 儲存 GPX 整點點位數據，用於 CSV 匯出
+let gpxRawPoints = []; // 🚩 修正：儲存所有經過計算和過濾的 GPX 點位 (Q2 核心)
+let currentGpxMode = 'proportional'; // 🚩 修正：當前 GPX 標記模式 (proportional 或 hourly)
 
-// GPX 濾波器參數 (人類徒步極限速度 20 km/h)
+// GPX 濾波器參數 (保持不變)
 const MAX_HUMAN_SPEED_KMH = 20; 
-// GPS 中斷門檻 (超過 18 分鐘未記錄，強制斷開連線)
 const MAX_TIME_GAP_HOURS = 0.3;
+const MARKER_DENSITY = 20; // 比例點位密度
 
 // 📌 JSON 檔案 URL 列表 (官方景點數據)
 const jsonUrls = [
-    //"https://piceayee.github.io/jsonhome/data/0310A.json",
-    //"https://piceayee.github.io/jsonhome/data/0310B.json",
-    //"https://piceayee.github.io/jsonhome/data/edit1-1.json",
-    //"https://piceayee.github.io/jsonhome/data/edit2-1.json",
-    //"https://piceayee.github.io/jsonhome/data/edit3-1.json"
+    "https://piceayee.github.io/jsonhome/data/0310A.json",
+    "https://piceayee.github.io/jsonhome/data/0310B.json",
+    "https://piceayee.github.io/jsonhome/data/edit1-1.json",
+    "https://piceayee.github.io/jsonhome/data/edit2-1.json",
+    "https://piceayee.github.io/jsonhome/data/edit3-1.json"
 ];
 
 
@@ -35,6 +36,7 @@ function convertDMSToDD(dms, direction) {
 }
 
 function haversineDistance(lat1, lon1, lat2, lon2) {
+    // ... (Haversine 2D 距離計算保持不變) ...
     const R = 6371;
     const dLat = (lat2 - lat1) * (Math.PI / 180);
     const dLon = (lon2 - lon1) * (Math.PI / 180);
@@ -42,8 +44,18 @@ function haversineDistance(lat1, lon1, lat2, lon2) {
         Math.sin(dLat / 2) * Math.sin(dLat / 2) +
         Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return R * c;
+    return R * c; // Kilometers
 }
+
+// 🚩 新增：3D 距離計算 (Q2 核心：考量垂直變化)
+function haversineDistance3D(lat1, lon1, ele1, lat2, lon2, ele2) {
+    const dist2D = haversineDistance(lat1, lon1, lat2, lon2); // 水平距離 (公里)
+    // 垂直距離 (公尺轉公里)
+    const dEleKm = (ele2 - ele1) / 1000; 
+    // 畢氏定理：c^2 = a^2 + b^2
+    return Math.sqrt(dist2D * dist2D + dEleKm * dEleKm); 
+}
+
 
 function formatMinutesToHMS(totalMinutes) {
     if (totalMinutes === null || totalMinutes < 0) return "N/A";
@@ -64,6 +76,7 @@ const parseExifDate = (dateString) => {
     return dateObj;
 };
 
+// ... (getCategoryClass 和 updatePopupStyle 保持不變) ...
 function getCategoryClass(category) {
     switch (category) {
         case "花磚＆裝飾": return "tag-red";
@@ -92,10 +105,10 @@ window.updatePopupStyle = function(img) {
     }
 };
 
-
 // ----------------------------------------------------------------------
 // ✅ 地圖載入與點位處理 
 // ----------------------------------------------------------------------
+// ... (loadAllMarkersFromGitHub 和 addMarkerToMap 保持不變) ...
 
 async function loadAllMarkersFromGitHub() {
     console.log("📥 開始並行載入所有 JSON 檔案 (靜態景點)...");
@@ -148,7 +161,7 @@ function addMarkerToMap(markerData) {
         : (markerData.date || "未知日期");
 
     // 導航連結修正為標準 Google Maps 搜尋格式
-    const gpsLink = `https://www.google.com/maps/search/?api=1&query=$${markerData.latitude},${markerData.longitude}`;
+    const gpsLink = `https://www.google.com/maps/search/?api=1&query=$$${markerData.latitude},${markerData.longitude}`;
 
     let popupContent = `
         <div class="popup-content">
@@ -259,7 +272,7 @@ function addMarkerToMap(markerData) {
 
 
 // ----------------------------------------------------------------------
-// ✅ GPX 軌跡處理 (整點追蹤與匯出)
+// ✅ GPX 軌跡處理 (數據解析、模式切換、增強匯出)
 // ----------------------------------------------------------------------
 
 function handleGpxUpload(event) {
@@ -271,26 +284,36 @@ function handleGpxUpload(event) {
     const reader = new FileReader();
     reader.onload = function(e) {
         try {
-            parseAndDrawGpx(e.target.result);
-            document.getElementById("exportGpxHourlyBtn").disabled = false;
+            gpxRawPoints = processGpxFile(e.target.result); // 提取並儲存所有豐富數據
+            
+            if (gpxRawPoints.length === 0) {
+                alert("GPX 檔案中未找到有效的軌跡點或時間/海拔資訊。");
+                return;
+            }
+            
+            // 成功後，根據當前模式繪製
+            toggleGpxView(currentGpxMode); 
+            
+            document.getElementById("exportGpxDataBtn").disabled = false;
+            document.getElementById("exportConsolidatedDataBtn").disabled = false;
+            document.getElementById("gpxMarkerModeSelect").disabled = false;
+            
         } catch (error) {
             alert("❌ GPX 檔案解析失敗，請確認格式是否正確。");
             console.error("GPX 解析錯誤:", error);
-            document.getElementById("exportGpxHourlyBtn").disabled = true;
+            // 失敗後禁用按鈕
+            document.getElementById("exportGpxDataBtn").disabled = true;
+            document.getElementById("exportConsolidatedDataBtn").disabled = true;
+            document.getElementById("gpxMarkerModeSelect").disabled = true;
         }
     };
     reader.readAsText(file);
 }
 
-// 解析 GPX 內容並在地圖上繪製軌跡 (含速度濾波器)
-function parseAndDrawGpx(gpxText) {
-    if (gpxLayer) {
-        map.removeLayer(gpxLayer); 
-    }
-
+// 🚩 修正：解析 GPX 內容並豐富數據 (不進行繪製)
+function processGpxFile(gpxText) {
     const parser = new DOMParser();
     const xmlDoc = parser.parseFromString(gpxText, "text/xml");
-    
     const rawPoints = []; 
     const points = xmlDoc.querySelectorAll('trkpt, rtept, wpt');
     
@@ -298,7 +321,8 @@ function parseAndDrawGpx(gpxText) {
         const lat = parseFloat(pt.getAttribute('lat'));
         const lon = parseFloat(pt.getAttribute('lon'));
         const timeElement = pt.querySelector('time');
-        
+        const eleElement = pt.querySelector('ele'); // 提取海拔
+
         let timeMs = null;
         let timeString = null;
         if (timeElement) {
@@ -306,46 +330,115 @@ function parseAndDrawGpx(gpxText) {
             timeMs = new Date(timeString).getTime();
         }
 
-        if (!isNaN(lat) && !isNaN(lon)) {
-            rawPoints.push({ lat, lon, timeMs, timeString }); 
+        const ele = eleElement ? parseFloat(eleElement.textContent) : undefined;
+
+        if (!isNaN(lat) && !isNaN(lon) && timeMs) {
+            rawPoints.push({ lat, lon, timeMs, timeString, ele }); 
         }
     });
-
-    if (rawPoints.length === 0) {
-        alert("GPX 檔案中未找到有效的軌跡點 (trkpt, rtept 或 wpt)。");
-        return;
-    }
     
-    // 1. 識別整點點位 (核心邏輯：只標記整點、起點、終點)
-    gpxHourlyMarkersData = [];
-    const startTimeMs = rawPoints[0].timeMs;
-    const endTimeMs = rawPoints[rawPoints.length - 1].timeMs;
-    let nextHourMs = 0;
+    if (rawPoints.length === 0) return [];
 
-    if (startTimeMs) {
-        // 計算第一個 upcoming hour mark
-        const startHourDate = new Date(startTimeMs);
-        startHourDate.setUTCMinutes(0, 0, 0); 
-        startHourDate.setUTCHours(startHourDate.getUTCHours() + 1);
-        nextHourMs = startHourDate.getTime();
+    // 數據豐富化 (計算距離、時間差、海拔變化)
+    const enrichedPoints = [];
+    let accumulatedDistance2D = 0;
+    let accumulatedDistance3D = 0;
+    let startTimeMs = rawPoints[0].timeMs;
+    let previousPoint = null;
+
+    rawPoints.forEach((p1, i) => {
+        let timeElapsedMinutes = 0;
+        let distance2DSinceLastKm = 0;
+        let distance3DSinceLastKm = 0;
+        let elevationChange = 0;
+
+        if (previousPoint) {
+            timeElapsedMinutes = (p1.timeMs - previousPoint.timeMs) / (1000 * 60);
+            
+            // 2D 水平距離
+            distance2DSinceLastKm = haversineDistance(previousPoint.lat, previousPoint.lon, p1.lat, p1.lon);
+            accumulatedDistance2D += distance2DSinceLastKm;
+
+            // 3D 行走距離 (Q2 核心)
+            if (p1.ele !== undefined && previousPoint.ele !== undefined) {
+                distance3DSinceLastKm = haversineDistance3D(previousPoint.lat, previousPoint.lon, previousPoint.ele, p1.lat, p1.lon, p1.ele);
+                accumulatedDistance3D += distance3DSinceLastKm;
+                elevationChange = p1.ele - previousPoint.ele;
+            } else {
+                 distance3DSinceLastKm = distance2DSinceLastKm; // 無海拔數據時使用 2D 距離
+                 accumulatedDistance3D += distance3DSinceLastKm;
+            }
+        }
+
+        const totalTimeMinutes = (p1.timeMs - startTimeMs) / (1000 * 60);
+        
+        enrichedPoints.push({
+            // 基礎數據
+            lat: p1.lat, 
+            lon: p1.lon, 
+            timeMs: p1.timeMs,
+            timeString: p1.timeString,
+            elevation: p1.ele, // 海拔高度
+            // 增強數據
+            timeElapsed: timeElapsedMinutes,
+            distance2DSinceLast: distance2DSinceLastKm,
+            distance3DSinceLast: distance3DSinceLastKm,
+            totalTime: totalTimeMinutes,
+            totalDistance2D: accumulatedDistance2D,
+            totalDistance3D: accumulatedDistance3D,
+            elevationChange: elevationChange // 垂直變化 (公尺)
+        });
+
+        previousPoint = p1;
+    });
+
+    return enrichedPoints;
+}
+
+// 🚩 新增：根據比例選擇標記點 (Q1 模式一)
+function getProportionalMarkers(enrichedPoints) {
+    const markers = [];
+    if (enrichedPoints.length === 0) return markers;
+
+    // 起點
+    markers.push({ ...enrichedPoints[0], markerType: 'Start' });
+
+    for (let i = MARKER_DENSITY; i < enrichedPoints.length - 1; i += MARKER_DENSITY) {
+        markers.push({ ...enrichedPoints[i], markerType: 'Proportional' });
     }
+
+    // 終點 (避免重複標記)
+    const lastPoint = enrichedPoints[enrichedPoints.length - 1];
+    if (markers.length === 0 || markers[markers.length - 1].timeMs !== lastPoint.timeMs) {
+         markers.push({ ...lastPoint, markerType: 'End' });
+    }
+    return markers;
+}
+
+// 🚩 新增：根據整點選擇標記點 (Q1 模式二)
+function getHourlyMarkers(enrichedPoints) {
+    const markers = [];
+    if (enrichedPoints.length === 0) return markers;
+
+    const startTimeMs = enrichedPoints[0].timeMs;
+    const endTimeMs = enrichedPoints[enrichedPoints.length - 1].timeMs;
     
-    // 確保第一個點加入 (作為起點標記)
-    if (rawPoints[0].timeMs) {
-         gpxHourlyMarkersData.push(rawPoints[0]);
-    }
+    const startHourDate = new Date(startTimeMs);
+    startHourDate.setUTCMinutes(0, 0, 0); 
+    startHourDate.setUTCHours(startHourDate.getUTCHours() + 1);
+    let nextHourMs = startHourDate.getTime();
+    
+    // 起點
+    markers.push({ ...enrichedPoints[0], markerType: 'Start' });
 
     let lastCheckedIndex = 0;
     while (nextHourMs < endTimeMs) {
         let closestPoint = null;
         let minTimeDiff = Infinity;
         
-        // 僅從上次檢查的位置向前搜尋
-        for (let i = lastCheckedIndex; i < rawPoints.length; i++) {
-            const currentPoint = rawPoints[i];
-            if (!currentPoint.timeMs) continue;
-
-            // 如果當前點已經超過下一個整點標記目標 30 分鐘，則停止本次搜尋
+        for (let i = lastCheckedIndex; i < enrichedPoints.length; i++) {
+            const currentPoint = enrichedPoints[i];
+            
             if (currentPoint.timeMs > nextHourMs + (30 * 60 * 1000)) { 
                 lastCheckedIndex = i;
                 break;
@@ -353,49 +446,54 @@ function parseAndDrawGpx(gpxText) {
             
             const timeDiff = Math.abs(currentPoint.timeMs - nextHourMs);
 
-            // 如果點在整點附近 (+- 30 分鐘) 且比目前找到的更接近
             if (timeDiff <= (30 * 60 * 1000) && timeDiff < minTimeDiff) {
                 minTimeDiff = timeDiff;
                 closestPoint = currentPoint;
             }
         }
         
-        // 加入找到的最接近點，並確保不重複
-        if (closestPoint && gpxHourlyMarkersData.length > 0 && gpxHourlyMarkersData[gpxHourlyMarkersData.length - 1].timeMs !== closestPoint.timeMs) {
-             gpxHourlyMarkersData.push(closestPoint);
-        } else if (closestPoint && gpxHourlyMarkersData.length === 0) {
-             gpxHourlyMarkersData.push(closestPoint);
+        if (closestPoint && !markers.some(m => m.timeMs === closestPoint.timeMs)) {
+             markers.push({ ...closestPoint, markerType: 'Hourly' });
         }
         
-        // 移至下一個整點
         nextHourMs += 1000 * 60 * 60; 
-        
-        if (nextHourMs > endTimeMs + (1000 * 60 * 60 * 2)) break; // 避免極端情況下的無限迴圈
+        if (nextHourMs > endTimeMs + (1000 * 60 * 60 * 2)) break; 
     }
 
-    // 確保最後一個點加入 (作為終點標記)
-    const lastRawPoint = rawPoints[rawPoints.length - 1];
-    if (gpxHourlyMarkersData.length === 0 || gpxHourlyMarkersData[gpxHourlyMarkersData.length - 1].timeMs !== lastRawPoint.timeMs) {
-        gpxHourlyMarkersData.push(lastRawPoint);
+    // 終點
+    const lastPoint = enrichedPoints[enrichedPoints.length - 1];
+    if (!markers.some(m => m.timeMs === lastPoint.timeMs)) {
+        markers.push({ ...lastPoint, markerType: 'End' });
     }
+    
+    return markers;
+}
 
+// 🚩 新增：核心繪製函數 (根據模式繪製)
+function toggleGpxView(mode) {
+    if (gpxRawPoints.length === 0) return;
+    currentGpxMode = mode;
 
-    // 2. 實作速度濾波器 (保持軌跡線的繪製邏輯)
+    // 清空舊圖層
+    if (gpxLayer) {
+        map.removeLayer(gpxLayer); 
+    }
+    gpxLayer = L.layerGroup();
+    
+    // 1. 軌跡線段過濾和繪製
     const filteredSegments = [];
     let currentSegment = [];
+    let previousPoint = null; 
 
-    for (let i = 0; i < rawPoints.length; i++) {
-        const p1 = rawPoints[i];
-        
+    gpxRawPoints.forEach((p1, i) => {
         if (i === 0) {
             currentSegment.push([p1.lat, p1.lon]);
-            continue;
+            previousPoint = p1;
+            return;
         }
 
-        const p0 = rawPoints[i - 1];
-        
-        const distanceKm = haversineDistance(p0.lat, p0.lon, p1.lat, p1.lon);
-        const timeDiffHours = (p1.timeMs - p0.timeMs) / (1000 * 60 * 60);
+        const distanceKm = p1.distance2DSinceLast;
+        const timeDiffHours = p1.timeElapsed / 60;
 
         let isValidConnection = true;
 
@@ -418,14 +516,13 @@ function parseAndDrawGpx(gpxText) {
             }
             currentSegment = [[p1.lat, p1.lon]]; 
         }
-    }
-    
+        previousPoint = p1;
+    });
+
     if (currentSegment.length > 1) {
         filteredSegments.push(currentSegment);
     }
 
-    // 3. 繪製軌跡和點位
-    gpxLayer = L.layerGroup();
     filteredSegments.forEach(segment => {
         L.polyline(segment, {
             color: '#8A2BE2', // 紫色軌跡線
@@ -434,52 +531,56 @@ function parseAndDrawGpx(gpxText) {
         }).addTo(gpxLayer);
     });
 
-    // 🚩 繪製整點點位 (紅色大圓點)
-    const uniqueHourlyMarkers = new Set();
-    gpxHourlyMarkersData.forEach(pt => {
-         const key = `${pt.lat.toFixed(6)},${pt.lon.toFixed(6)},${pt.timeMs}`; // 加上時間戳記確保唯一性
-         if (!uniqueHourlyMarkers.has(key)) {
-            uniqueHourlyMarkers.add(key);
-            
-            const dateObj = pt.timeMs ? new Date(pt.timeMs) : null;
-            // 由於 GPX 時間是 UTC，這裡轉換為本地時間顯示
-            const timeStr = dateObj ? dateObj.toLocaleString() : '時間未知'; 
-            
-            L.circleMarker([pt.lat, pt.lon], {
-                radius: 6, 
-                color: '#FF0000', // 紅色標示整點
-                fillColor: '#FF0000',
-                fillOpacity: 1,
-                weight: 2
-            }).bindPopup(`<strong>整點紀錄</strong><br>時間: ${timeStr}<br>GPS: ${pt.lat.toFixed(5)}, ${pt.lon.toFixed(5)}`).addTo(gpxLayer);
-        }
+    // 2. 標記點位繪製
+    const selectedMarkers = mode === 'hourly' 
+        ? getHourlyMarkers(gpxRawPoints) 
+        : getProportionalMarkers(gpxRawPoints);
+        
+    selectedMarkers.forEach(pt => {
+        const dateObj = pt.timeMs ? new Date(pt.timeMs) : null;
+        const timeStr = dateObj ? dateObj.toLocaleString() : '時間未知'; 
+        const elevationStr = pt.elevation !== undefined ? `海拔: ${pt.elevation.toFixed(1)}m` : '';
+
+        L.circleMarker([pt.lat, pt.lon], {
+            radius: 6, 
+            color: '#FF0000', // 紅色標示
+            fillColor: '#FF0000',
+            fillOpacity: 1,
+            weight: 2
+        }).bindPopup(`
+            <strong>GPX 標記點 (${pt.markerType})</strong><br>
+            時間: ${timeStr}<br>
+            ${elevationStr}<br>
+            GPS: ${pt.lat.toFixed(5)}, ${pt.lon.toFixed(5)}
+        `).addTo(gpxLayer);
     });
     
     gpxLayer.addTo(map);
 
+    // 定位地圖視角
     const allPoints = filteredSegments.flat();
     if (allPoints.length > 0) {
         map.fitBounds(L.latLngBounds(allPoints), { padding: [50, 50] });
     }
-    
-    console.log(`✅ 成功匯入 GPX 軌跡，共 ${rawPoints.length} 個點，識別出 ${gpxHourlyMarkersData.length} 個整點/起終點紀錄。`);
 }
 
-// 匯出 GPX 整點資料功能
-function exportGpxHourlyData() {
-    if (gpxHourlyMarkersData.length === 0) {
-        alert("沒有 GPX 整點數據可供匯出！");
+// 🚩 修正：匯出 GPX 詳細數據 (Q2 實現)
+function exportGpxData() {
+    if (gpxRawPoints.length === 0) {
+        alert("沒有 GPX 數據可供匯出！");
         return;
     }
 
-    let csvContent = "時間,緯度,經度\n";
+    let csvContent = "時間,緯度,經度,海拔(m),與前一點時間差(時:分:秒),海拔變化(m),水平距離差(km),行走距離差(km),累計時間(時:分:秒),累計水平距離(km),累計行走距離(km)\n";
     
-    gpxHourlyMarkersData.forEach(item => {
-        const dateObj = item.timeMs ? new Date(item.timeMs) : null;
-        // 轉換為本地時間顯示
-        const time = dateObj ? dateObj.toLocaleString().replace(/,/g, " ") : "未知時間";
+    gpxRawPoints.forEach(item => {
+        const timeElapsedHMS = formatMinutesToHMS(item.timeElapsed);
+        const totalTimeHMS = formatMinutesToHMS(item.totalTime);
+        const time = item.timeString ? new Date(item.timeString).toLocaleString().replace(/,/g, " ") : "未知時間";
+        const eleStr = item.elevation !== undefined ? item.elevation.toFixed(2) : "N/A";
+        const eleChangeStr = item.elevationChange !== undefined ? item.elevationChange.toFixed(2) : "N/A";
         
-        csvContent += `"${time}",${item.lat.toFixed(6)},${item.lon.toFixed(6)}\n`;
+        csvContent += `"${time}",${item.lat.toFixed(6)},${item.lon.toFixed(6)},${eleStr},${timeElapsedHMS},${eleChangeStr},${item.distance2DSinceLast.toFixed(4)},${item.distance3DSinceLast.toFixed(4)},${totalTimeHMS},${item.totalDistance2D.toFixed(3)},${item.totalDistance3D.toFixed(3)}\n`;
     });
 
     const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -488,7 +589,67 @@ function exportGpxHourlyData() {
     if (link.download !== undefined) {
         const url = URL.createObjectURL(blob);
         link.setAttribute("href", url);
-        link.setAttribute("download", `GPX_整點紀錄_${new Date().toISOString().slice(0, 10)}.csv`);
+        link.setAttribute("download", `GPX_詳細紀錄_${new Date().toISOString().slice(0, 10)}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+}
+
+// 🚩 新增：整合匯出所有數據 (Q3 實現)
+function exportConsolidatedData() {
+    if (gpxRawPoints.length === 0 && trailMarkersData.length === 0) {
+        alert("沒有任何 GPX 或照片數據可供匯出！");
+        return;
+    }
+
+    // 1. 處理 GPX 數據
+    const gpxData = gpxRawPoints.map(item => ({
+        type: 'GPX',
+        timeMs: item.timeMs,
+        time: new Date(item.timeString).toLocaleString().replace(/,/g, " "),
+        lat: item.lat,
+        lon: item.lon,
+        elevation: item.elevation !== undefined ? item.elevation.toFixed(2) : "N/A",
+        timeElapsed: formatMinutesToHMS(item.timeElapsed),
+        distance3D: item.distance3DSinceLast.toFixed(4),
+        elevationChange: item.elevationChange !== undefined ? item.elevationChange.toFixed(2) : "N/A",
+        name: 'N/A',
+        totalDistance3D: item.totalDistance3D.toFixed(3)
+    }));
+
+    // 2. 處理照片數據
+    const photoData = trailMarkersData.map(item => ({
+        type: 'PHOTO',
+        timeMs: new Date(item.time).getTime(),
+        time: item.time.replace(/,/g, " "),
+        lat: item.lat,
+        lon: item.lon,
+        // 照片沒有海拔數據，留空
+        elevation: 'N/A', 
+        timeElapsed: formatMinutesToHMS(item.timeElapsed),
+        distance3D: item.distanceSinceLast.toFixed(4), 
+        elevationChange: 'N/A',
+        name: `照片 #${item.order}`,
+        totalDistance3D: item.totalDistance.toFixed(3)
+    }));
+
+    // 3. 合併並按時間排序
+    const allData = [...gpxData, ...photoData].sort((a, b) => a.timeMs - b.timeMs);
+
+    let csvContent = "類型,時間,緯度,經度,海拔(m),與前點時間差(時:分:秒),海拔變化(m),行走距離差(km),累計行走距離(km),名稱/備註\n";
+    
+    allData.forEach(item => {
+        csvContent += `${item.type},"${item.time}",${item.lat.toFixed(6)},${item.lon.toFixed(6)},${item.elevation},${item.timeElapsed},${item.elevationChange},${item.distance3D},${item.totalDistance3D},"${item.name}"\n`;
+    });
+
+    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    
+    if (link.download !== undefined) {
+        const url = URL.createObjectURL(blob);
+        link.setAttribute("href", url);
+        link.setAttribute("download", `整合紀錄_${new Date().toISOString().slice(0, 10)}.csv`);
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
@@ -496,17 +657,17 @@ function exportGpxHourlyData() {
 }
 
 
-// ----------------------------------------------------------------------
-// ✅ HEIC 檔案處理
-// ----------------------------------------------------------------------
+// ... (HEIC/DNG 處理、照片上傳、JSON 匯出/匯入、清除數據等函式保持不變) ...
 
-// 處理單一檔案，如果是 HEIC 則轉換為 JPEG 
+// 處理單一檔案 (保留 DNG/HEIC 處理邏輯)
 async function processFile(file) {
-    if (file.type.includes('heic') || file.type.includes('heif') || file.name.toLowerCase().endsWith('.heic') || file.name.toLowerCase().endsWith('.heif')) {
+    const fileNameLower = file.name.toLowerCase();
+    
+    if (fileNameLower.endsWith('.heic') || fileNameLower.endsWith('.heif') || file.type.includes('heic') || file.type.includes('heif')) {
+        // ... (HEIC 轉換邏輯) ...
         console.log(`ℹ️ 正在轉換 HEIC 檔案: ${file.name}`);
         try {
             if (typeof heic2any !== 'function') {
-                console.error("❌ HEIC 轉換失敗：heic2any 函式庫未載入。");
                 alert(`HEIC 轉換失敗：heic2any 函式庫未載入。檔案 ${file.name} 將被跳過。`);
                 return null;
             }
@@ -517,33 +678,67 @@ async function processFile(file) {
                 quality: 0.8
             });
             
-            return {
-                originalFile: file,
-                displayBlob: jpegBlob, 
-                isHeic: true
-            };
+            return { originalFile: file, displayBlob: jpegBlob, isHeic: true, isRaw: false };
         } catch (error) {
             console.error(`❌ HEIC 轉換失敗: ${file.name}`, error);
-            alert(`HEIC 轉換失敗: ${file.name}。錯誤代碼：${error.code}。可能原因：檔案格式不完全支援或損壞。`);
+            alert(`HEIC 轉換失敗: ${file.name}。錯誤代碼：${error.code}。`);
             return null; 
         }
     }
-    return {
-        originalFile: file,
-        displayBlob: file, 
-        isHeic: false
-    };
+    
+    if (fileNameLower.endsWith('.dng') || fileNameLower.endsWith('.raw')) {
+        console.warn(`⚠️ 檔案 ${file.name} 是 RAW (DNG) 格式。將嘗試提取 GPS 資訊，但圖片可能因瀏覽器不支援而無法正常顯示。`);
+        return { originalFile: file, displayBlob: file, isHeic: false, isRaw: true };
+    }
+
+    return { originalFile: file, displayBlob: file, isHeic: false, isRaw: false };
 }
 
 
-// ----------------------------------------------------------------------
-// ✅ 照片/行程紀錄處理 (核心邏輯：合併、排序、繪圖)
-// ----------------------------------------------------------------------
+async function handlePhotoUpload(event) {
+    const files = Array.from(event.target.files);
+    if (files.length === 0) return;
 
-// 核心修正：統一處理所有照片記錄 (新上傳、舊紀錄、JSON匯入) 的排序和繪圖
-async function processAndRedrawAllTrailRecords(newRawData, existingTrailRecords, gpxTrack = null) {
+    const processedFiles = await Promise.all(files.map(processFile));
+
+    const promises = processedFiles.filter(p => p !== null).map(p => new Promise(resolve => {
+        EXIF.getData(p.originalFile, function() {
+            let date = EXIF.getTag(this, 'DateTimeOriginal'); 
+            if (!date) {
+                date = EXIF.getTag(this, 'DateTime');
+            }
+
+            const gpsLat = EXIF.getTag(this, 'GPSLatitude');
+            const gpsLatRef = EXIF.getTag(this, 'GPSLatitudeRef');
+            const gpsLon = EXIF.getTag(this, 'GPSLongitude');
+            const gpsLonRef = EXIF.getTag(this, 'GPSLongitudeRef');
+
+            let data = {
+                file: p.originalFile, 
+                displayBlob: p.displayBlob, 
+                date, 
+                gpsLat, 
+                gpsLatRef, 
+                gpsLon, 
+                gpsLonRef, 
+                name: p.originalFile.name,
+                isRaw: p.isRaw 
+            };
+            resolve(data);
+        });
+    }));
+
+    let newRawData = await Promise.all(promises);
     
-    // 1. 準備合併列表：新舊照片數據統一結構
+    await processAndRedrawAllTrailRecords(newRawData, trailMarkersData); 
+    
+    event.target.value = "";
+}
+
+async function processAndRedrawAllTrailRecords(newRawData, existingTrailRecords, gpxTrack = null) {
+    // ... (此函式中段的邏輯保持不變，它負責合併、排序、繪製照片，並在最後更新匯出按鈕狀態) ...
+
+    // 1. 準備合併列表
     const oldTrailRecords = existingTrailRecords.map(item => ({
         isNew: false,
         dateString: item.time, 
@@ -568,10 +763,11 @@ async function processAndRedrawAllTrailRecords(newRawData, existingTrailRecords,
     if (allTrailRecords.length === 0) {
         document.getElementById("exportTrailDataBtn").disabled = true;
         document.getElementById("exportTrailJsonBtn").disabled = true;
+        document.getElementById("exportConsolidatedDataBtn").disabled = (gpxRawPoints.length === 0);
         return;
     }
 
-    // 2. 排序：將所有新舊紀錄依日期時間排序
+    // 2. 排序
     allTrailRecords.sort((a, b) => {
         const dateA = a.isNew ? parseExifDate(a.dateString) : new Date(a.dateString);
         const dateB = b.isNew ? parseExifDate(b.dateString) : new Date(b.dateString);
@@ -580,7 +776,7 @@ async function processAndRedrawAllTrailRecords(newRawData, existingTrailRecords,
         return dateA - dateB;
     });
 
-    // 3. 清空和初始化 (只清除登山紀錄，保留靜態景點)
+    // 3. 清空和初始化
     Object.values(leafletTrailMarkers).forEach(marker => {
         if (map.hasLayer(marker)) {
             map.removeLayer(marker);
@@ -661,14 +857,21 @@ async function processAndRedrawAllTrailRecords(newRawData, existingTrailRecords,
         };
 
         if (isNewFile) {
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                finalMarkerData.image = e.target.result;
-                addMarkerToMap({ ...finalMarkerData, latitude: finalMarkerData.lat, longitude: finalMarkerData.lon });
-                trailMarkersData.push({ ...finalMarkerData, image: e.target.result }); 
-                resolve();
-            };
-            reader.readAsDataURL(currentData.displayBlob);
+            if (currentData.isRaw) { 
+                 finalMarkerData.image = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="300" height="200" viewBox="0 0 300 200"><rect fill="#cccccc" width="300" height="200"/><text x="150" y="100" font-family="Arial" font-size="20" fill="#333333" text-anchor="middle">RAW (DNG) 圖片，無法顯示</text></svg>';
+                 addMarkerToMap({ ...finalMarkerData, latitude: finalMarkerData.lat, longitude: finalMarkerData.lon });
+                 trailMarkersData.push({ ...finalMarkerData }); 
+                 resolve();
+            } else {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    finalMarkerData.image = e.target.result;
+                    addMarkerToMap({ ...finalMarkerData, latitude: finalMarkerData.lat, longitude: finalMarkerData.lon });
+                    trailMarkersData.push({ ...finalMarkerData, image: e.target.result }); 
+                    resolve();
+                };
+                reader.readAsDataURL(currentData.displayBlob); 
+            }
         } else {
             finalMarkerData.image = imageSource;
             addMarkerToMap({ ...finalMarkerData, latitude: finalMarkerData.lat, longitude: finalMarkerData.lon });
@@ -685,27 +888,25 @@ async function processAndRedrawAllTrailRecords(newRawData, existingTrailRecords,
 
     await Promise.all(reDrawPromises);
 
-    // 5. 處理 JSON 匯入的軌跡線
+    // 5. 處理 JSON 匯入的軌跡線 (如果 JSON 匯入 GPX，需要重繪)
     if (gpxTrack && Array.isArray(gpxTrack) && gpxTrack.length > 0) {
         if (gpxLayer) {
             map.removeLayer(gpxLayer); 
         }
         gpxLayer = L.layerGroup();
-        L.polyline(gpxTrack, {
-            color: '#8A2BE2', 
-            weight: 4,
-            opacity: 0.8
-        }).addTo(gpxLayer);
+        L.polyline(gpxTrack, { color: '#8A2BE2', weight: 4, opacity: 0.8 }).addTo(gpxLayer);
         gpxLayer.addTo(map);
-        // JSON 匯入無法提供整點數據
-        gpxHourlyMarkersData = []; 
-        document.getElementById("exportGpxHourlyBtn").disabled = true;
+        // JSON 匯入不包含詳細點位數據
+        gpxRawPoints = []; 
+        document.getElementById("exportGpxDataBtn").disabled = true;
     }
 
 
     // 6. 更新匯出按鈕狀態並定位地圖
     document.getElementById("exportTrailDataBtn").disabled = false;
     document.getElementById("exportTrailJsonBtn").disabled = false;
+    // 整合匯出鈕的狀態取決於是否有 GPX 或照片
+    document.getElementById("exportConsolidatedDataBtn").disabled = !(trailMarkersData.length > 0 || gpxRawPoints.length > 0);
     
     const lastPhoto = trailMarkersData[trailMarkersData.length - 1];
     const lastMarker = leafletTrailMarkers[lastPhoto.id];
@@ -717,54 +918,8 @@ async function processAndRedrawAllTrailRecords(newRawData, existingTrailRecords,
 }
 
 
-// 處理上傳照片 (更新為呼叫新的核心處理函式)
-async function handlePhotoUpload(event) {
-    const files = Array.from(event.target.files);
-    if (files.length === 0) return;
-
-    // 1. 處理新上傳檔案 (包含 HEIC 轉換和 EXIF 讀取)
-    const processedFiles = await Promise.all(files.map(processFile));
-
-    const promises = processedFiles.filter(p => p !== null).map(p => new Promise(resolve => {
-        EXIF.getData(p.originalFile, function() {
-            let date = EXIF.getTag(this, 'DateTimeOriginal'); 
-            if (!date) {
-                date = EXIF.getTag(this, 'DateTime');
-            }
-
-            const gpsLat = EXIF.getTag(this, 'GPSLatitude');
-            const gpsLatRef = EXIF.getTag(this, 'GPSLatitudeRef');
-            const gpsLon = EXIF.getTag(this, 'GPSLongitude');
-            const gpsLonRef = EXIF.getTag(this, 'GPSLongitudeRef');
-
-            let data = {
-                file: p.originalFile, 
-                displayBlob: p.displayBlob, 
-                date, 
-                gpsLat, 
-                gpsLatRef, 
-                gpsLon, 
-                gpsLonRef, 
-                name: p.originalFile.name 
-            };
-            resolve(data);
-        });
-    }));
-
-    let newRawData = await Promise.all(promises);
-    
-    // 2. 呼叫核心處理函式，傳入新數據和現有數據
-    await processAndRedrawAllTrailRecords(newRawData, trailMarkersData); 
-    
-    event.target.value = "";
-}
-
-// ----------------------------------------------------------------------
-// ✅ 匯出/匯入/清除 功能
-// ----------------------------------------------------------------------
-
-// 匯出照片紀錄資料功能 (CSV)
 function exportTrailData() {
+    // ... (CSV 匯出照片紀錄函式保持不變) ...
     if (trailMarkersData.length === 0) {
         alert("沒有登山照片數據可供匯出！");
         return;
@@ -796,9 +951,8 @@ function exportTrailData() {
     }
 }
 
-
-// 導出整個登山行程為 JSON 檔案
 function exportTrailJson() {
+    // ... (JSON 匯出函式保持不變) ...
     if (trailMarkersData.length === 0) {
         alert("沒有登山照片數據可供匯出！");
         return;
@@ -808,7 +962,6 @@ function exportTrailJson() {
     if (gpxLayer) {
         gpxLayer.eachLayer(layer => {
             if (layer instanceof L.Polyline) {
-                // 將軌跡線的 LatLngs 轉換為 [lat, lng] 陣列
                 gpxPoints = gpxPoints.concat(layer.getLatLngs().map(latLng => [latLng.lat, latLng.lng]));
             }
         });
@@ -833,8 +986,8 @@ function exportTrailJson() {
     document.body.removeChild(link);
 }
 
-// 匯入行程 JSON 函式
 function importTrailJson(event) {
+    // ... (JSON 匯入函式保持不變) ...
     const file = event.target.files[0];
     if (!file) return;
     
@@ -848,8 +1001,14 @@ function importTrailJson(event) {
                  throw new Error("JSON 格式不正確，缺少 photoRecords 陣列。");
             }
             
-            // 處理照片紀錄：將 JSON 內的紀錄視為舊紀錄，並與可能已在頁面上的紀錄合併 (雖然通常建議先清除)
             await processAndRedrawAllTrailRecords([], data.photoRecords, data.gpxTrack || null); 
+            
+            // 重新繪製 GPX 軌跡後，由於沒有原始數據，禁用 GPX 匯出
+            if (data.gpxTrack && data.gpxTrack.length > 0) {
+                 gpxRawPoints = [];
+                 document.getElementById("exportGpxDataBtn").disabled = true;
+            }
+            document.getElementById("exportConsolidatedDataBtn").disabled = false;
             
             alert(`✅ 成功匯入行程紀錄: ${data.hikeName || "未命名行程"}，共 ${data.photoRecords.length} 個點位。`);
             
@@ -861,7 +1020,6 @@ function importTrailJson(event) {
     reader.readAsText(file);
 }
 
-// 清除所有登山紀錄、GPX 軌跡
 function handleClearData() {
     if (!confirm("確定要清除所有登山照片紀錄和 GPX 軌跡嗎？靜態景點將被保留。")) {
         return;
@@ -871,9 +1029,10 @@ function handleClearData() {
     if (gpxLayer) {
         map.removeLayer(gpxLayer);
         gpxLayer = null;
-        gpxHourlyMarkersData = [];
+        gpxRawPoints = []; 
     }
-    document.getElementById("exportGpxHourlyBtn").disabled = true;
+    document.getElementById("exportGpxDataBtn").disabled = true;
+    document.getElementById("gpxMarkerModeSelect").disabled = true;
 
     // 移除所有登山照片標記 (紫色的)
     Object.values(leafletTrailMarkers).forEach(marker => {
@@ -895,6 +1054,7 @@ function handleClearData() {
     // 禁用匯出按鈕
     document.getElementById("exportTrailDataBtn").disabled = true;
     document.getElementById("exportTrailJsonBtn").disabled = true;
+    document.getElementById("exportConsolidatedDataBtn").disabled = true;
 
     alert("✅ 所有登山紀錄和 GPX 軌跡已清除！");
 }
@@ -907,13 +1067,13 @@ function handleClearData() {
 window.onload = function() {
     console.log("🔵 頁面載入完成，初始化地圖...");
     
-    // 初始化地圖
+    // 初始化地圖 (保持不變)
     map = L.map("map").setView([24.46, 118.35], 12);
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
         attribution: '© OpenStreetMap contributors'
     }).addTo(map);
     
-    // 載入景點數據
+    // 載入景點數據 (保持不變)
     loadAllMarkersFromGitHub();
     
     // 圖片放大 Modal 邏輯 (保持不變)
@@ -951,10 +1111,13 @@ window.onload = function() {
     const exportTrailJsonBtn = document.getElementById("exportTrailJsonBtn"); 
     const gpxUpload = document.getElementById("gpxUpload");
     const selectGpxBtn = document.getElementById("selectGpxBtn");
-    const exportGpxHourlyBtn = document.getElementById("exportGpxHourlyBtn"); 
+    const exportGpxDataBtn = document.getElementById("exportGpxDataBtn"); // 🚩 修正 ID
+    const exportConsolidatedDataBtn = document.getElementById("exportConsolidatedDataBtn"); // 🚩 新增 ID
     const jsonUpload = document.getElementById("jsonUpload");
     const selectJsonBtn = document.getElementById("selectJsonBtn");
     const clearDataBtn = document.getElementById("clearDataBtn");
+    const gpxMarkerModeSelect = document.getElementById("gpxMarkerModeSelect"); // 🚩 新增 ID
+
     
     if (selectPhotosBtn && photoUpload) {
         selectPhotosBtn.addEventListener("click", () => photoUpload.click());
@@ -972,10 +1135,15 @@ window.onload = function() {
         selectGpxBtn.addEventListener("click", () => gpxUpload.click());
         gpxUpload.addEventListener("change", handleGpxUpload); 
     }
-    // GPX 整點匯出事件
-    if (exportGpxHourlyBtn) {
-        exportGpxHourlyBtn.addEventListener("click", exportGpxHourlyData);
-        exportGpxHourlyBtn.disabled = true; // 預設禁用
+    // GPX 數據匯出事件
+    if (exportGpxDataBtn) {
+        exportGpxDataBtn.addEventListener("click", exportGpxData);
+        exportGpxDataBtn.disabled = true; 
+    }
+    // 整合匯出事件
+    if (exportConsolidatedDataBtn) {
+        exportConsolidatedDataBtn.addEventListener("click", exportConsolidatedData);
+        exportConsolidatedDataBtn.disabled = true;
     }
     
     // JSON 匯入事件
@@ -987,5 +1155,13 @@ window.onload = function() {
     // 清除資料事件
     if (clearDataBtn) {
         clearDataBtn.addEventListener("click", handleClearData);
+    }
+    
+    // 🚩 新增：GPX 模式切換事件 (Q1)
+    if (gpxMarkerModeSelect) {
+        gpxMarkerModeSelect.addEventListener("change", function(event) {
+            toggleGpxView(event.target.value);
+        });
+        gpxMarkerModeSelect.disabled = true;
     }
 };
