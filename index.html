@@ -25,6 +25,18 @@
                 <input type="file" id="gpxUpload" accept=".gpx">
                 <button id="selectGpxBtn" class="action-btn primary-btn">匯入 GPX 軌跡</button>
                 
+                <div class="control-group">
+                    <h3>GPX 軌跡標記模式</h3>
+                    <select id="gpxMarkerModeSelect" class="action-btn secondary-btn" disabled>
+                        <option value="proportional">比例點位 (每 20 點)</option>
+                        <option value="hourly">時間點位 (每整點)</option>
+                    </select>
+                </div>
+                <button id="exportGpxDataBtn" class="action-btn secondary-btn" disabled>匯出 GPX 詳細數據 (CSV)</button>
+    
+    <button id="exportConsolidatedDataBtn" class="action-btn secondary-btn" disabled>整合匯出全部紀錄 (CSV)</button>
+
+    </div>
                 <input type="file" id="jsonUpload" accept=".json">
                 <button id="selectJsonBtn" class="action-btn secondary-btn">匯入行程 (JSON)</button>
                 
