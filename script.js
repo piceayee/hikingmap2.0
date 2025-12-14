@@ -14,11 +14,6 @@ const MARKER_DENSITY = 20; // 比例點位密度
 
 // 📌 JSON 檔案 URL 列表 (官方景點數據)
 const jsonUrls = [
-    "https://piceayee.github.io/jsonhome/data/0310A.json",
-    "https://piceayee.github.io/jsonhome/data/0310B.json",
-    "https://piceayee.github.io/jsonhome/data/edit1-1.json",
-    "https://piceayee.github.io/jsonhome/data/edit2-1.json",
-    "https://piceayee.github.io/jsonhome/data/edit3-1.json"
 ];
 
 
@@ -1068,7 +1063,7 @@ window.onload = function() {
     console.log("🔵 頁面載入完成，初始化地圖...");
     
     // 初始化地圖 (保持不變)
-    map = L.map("map").setView([24.46, 118.35], 12);
+    map = L.map("map").setView([23.6, 120.9], 9);
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
         attribution: '© OpenStreetMap contributors'
     }).addTo(map);
